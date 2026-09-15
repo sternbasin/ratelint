@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ratelint"
+version = "0.1.0"
+description = "A linter that flags likely rate-limiting mistakes in Python code."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "sternbasin" }]
+dependencies = []
+
+[project.scripts]
+ratelint = "ratelint.cli:main"
+
+[tool.setuptools]
+packages = ["ratelint"]
