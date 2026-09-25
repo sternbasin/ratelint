@@ -62,6 +62,27 @@ Pass any number of files or directories. Directories are scanned
 recursively for `*.py` files. Exit code is 1 if anything was found, 0
 otherwise, so it can be dropped into CI as-is.
 
+## Config
+
+The name lists that decide what counts as an HTTP call, a sleep, or a
+route decorator are heuristics, and every codebase has its own names for
+these things - an internal `http.fetch()` wrapper, a routing decorator
+called `@endpoint` instead of `@app.route`. Drop a JSON file named
+`.ratelint.json` or `ratelint.json` in the directory you run ratelint
+from (or pass `--config path/to/file.json`) to add to the defaults:
+
+```json
+{
+    "http_methods": ["fetch"],
+    "route_methods": ["endpoint"],
+    "sleep_names": ["backoff"]
+}
+```
+
+Every key is additive - it extends the built-in list, it doesn't replace
+it. Recognized keys are `http_methods`, `http_funcs`, `route_methods`,
+and `sleep_names`.
+
 ## Install
 
 No dependencies, standard library only. Either run it in place from a

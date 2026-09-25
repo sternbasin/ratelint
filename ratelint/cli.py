@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .checks import check_source
+from .config import find_default_config, load_config
 
 
 def _iter_python_files(paths):
@@ -24,7 +25,25 @@ def main(argv=None):
         description="Flag likely rate-limiting mistakes in Python code.",
     )
     parser.add_argument("paths", nargs="+", help="files or directories to scan")
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "JSON file with extra HTTP/route/sleep names to recognize "
+            "(default: look for .ratelint.json or ratelint.json in the "
+            "current directory)"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    config_path = Path(args.config) if args.config else find_default_config(Path.cwd())
+    config = None
+    if config_path is not None:
+        try:
+            config = load_config(config_path)
+        except (OSError, ValueError) as exc:
+            print(f"{config_path}: could not load config: {exc}", file=sys.stderr)
+            return 2
 
     total = 0
     for path in _iter_python_files(args.paths):
@@ -34,7 +53,7 @@ def main(argv=None):
             print(f"{path}: could not read file: {exc}", file=sys.stderr)
             continue
         try:
-            findings = check_source(source, filename=str(path))
+            findings = check_source(source, filename=str(path), config=config)
         except SyntaxError as exc:
             print(f"{path}:{exc.lineno}: could not parse: {exc.msg}", file=sys.stderr)
             continue

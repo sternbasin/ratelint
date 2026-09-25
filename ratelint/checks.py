@@ -14,15 +14,30 @@ to be a proof of correctness.
 """
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-HTTP_METHOD_NAMES = {"get", "post", "put", "patch", "delete", "head", "request"}
-HTTP_FUNC_NAMES = {"urlopen"}
-SLEEP_NAMES = {"sleep"}
-ROUTE_METHOD_NAMES = {"route", "get", "post", "put", "patch", "delete"}
+HTTP_METHOD_NAMES = frozenset({"get", "post", "put", "patch", "delete", "head", "request"})
+HTTP_FUNC_NAMES = frozenset({"urlopen"})
+SLEEP_NAMES = frozenset({"sleep"})
+ROUTE_METHOD_NAMES = frozenset({"route", "get", "post", "put", "patch", "delete"})
 
 LOOP_TYPES = (ast.For, ast.AsyncFor, ast.While)
 SCOPE_BOUNDARY_TYPES = LOOP_TYPES + (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+@dataclass(frozen=True)
+class RuleConfig:
+    """Name lists the checks match against. A project with an internal
+    HTTP wrapper or routing decorator can extend these (see config.py)
+    instead of only matching requests/flask-shaped code."""
+
+    http_method_names: frozenset = field(default_factory=lambda: HTTP_METHOD_NAMES)
+    http_func_names: frozenset = field(default_factory=lambda: HTTP_FUNC_NAMES)
+    sleep_names: frozenset = field(default_factory=lambda: SLEEP_NAMES)
+    route_method_names: frozenset = field(default_factory=lambda: ROUTE_METHOD_NAMES)
+
+
+DEFAULT_CONFIG = RuleConfig()
 
 
 @dataclass
@@ -44,24 +59,24 @@ def _dotted_name(node):
     return ".".join(reversed(parts))
 
 
-def _is_http_call(call):
+def _is_http_call(call, config):
     if not isinstance(call, ast.Call):
         return False
     func = call.func
-    if isinstance(func, ast.Attribute) and func.attr in HTTP_METHOD_NAMES:
+    if isinstance(func, ast.Attribute) and func.attr in config.http_method_names:
         return True
-    if isinstance(func, ast.Name) and func.id in HTTP_FUNC_NAMES:
+    if isinstance(func, ast.Name) and func.id in config.http_func_names:
         return True
     return False
 
 
-def _is_sleep_call(call):
+def _is_sleep_call(call, config):
     if not isinstance(call, ast.Call):
         return False
     func = call.func
-    if isinstance(func, ast.Attribute) and func.attr in SLEEP_NAMES:
+    if isinstance(func, ast.Attribute) and func.attr in config.sleep_names:
         return True
-    if isinstance(func, ast.Name) and func.id in SLEEP_NAMES:
+    if isinstance(func, ast.Name) and func.id in config.sleep_names:
         return True
     return False
 
@@ -77,24 +92,24 @@ def _own_calls(node):
         yield from _own_calls(child)
 
 
-def _has_sleep_anywhere(node):
+def _has_sleep_anywhere(node, config):
     """A sleep nested deeper (even inside an inner loop) still counts as
     pacing for the outer loop, so this one does not stop at boundaries."""
     for child in ast.walk(node):
-        if _is_sleep_call(child):
+        if _is_sleep_call(child, config):
             return True
     return False
 
 
-def _check_loops(tree):
+def _check_loops(tree, config):
     findings = []
     for node in ast.walk(tree):
         if not isinstance(node, LOOP_TYPES):
             continue
-        if _has_sleep_anywhere(node):
+        if _has_sleep_anywhere(node, config):
             continue
         for call in _own_calls(node):
-            if _is_http_call(call):
+            if _is_http_call(call, config):
                 findings.append(
                     Finding(
                         line=call.lineno,
@@ -113,24 +128,24 @@ def _decorator_dotted_name(dec):
     return _dotted_name(dec.func if isinstance(dec, ast.Call) else dec)
 
 
-def _looks_like_route(name):
+def _looks_like_route(name, config):
     if not name:
         return False
     last = name.rsplit(".", 1)[-1]
-    return last in ROUTE_METHOD_NAMES and "limit" not in name.lower()
+    return last in config.route_method_names and "limit" not in name.lower()
 
 
 def _looks_like_limiter(name):
     return "limit" in name.lower() if name else False
 
 
-def _check_routes(tree):
+def _check_routes(tree, config):
     findings = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         names = [_decorator_dotted_name(d) for d in node.decorator_list]
-        if not any(_looks_like_route(n) for n in names):
+        if not any(_looks_like_route(n, config) for n in names):
             continue
         if any(_looks_like_limiter(n) for n in names):
             continue
@@ -147,9 +162,15 @@ def _check_routes(tree):
     return findings
 
 
-def check_source(source, filename="<string>"):
-    """Parse source and return a list of Finding, sorted by line number."""
+def check_source(source, filename="<string>", config=None):
+    """Parse source and return a list of Finding, sorted by line number.
+
+    `config` lets a caller extend the built-in name lists (see
+    RuleConfig / config.load_config); the default matches only the
+    common requests/flask/django-ish spellings.
+    """
+    config = config or DEFAULT_CONFIG
     tree = ast.parse(source, filename=filename)
-    findings = _check_loops(tree) + _check_routes(tree)
+    findings = _check_loops(tree, config) + _check_routes(tree, config)
     findings.sort(key=lambda f: (f.line, f.col))
     return findings
